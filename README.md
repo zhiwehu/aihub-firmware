@@ -73,6 +73,11 @@ docs/                     USB 接入、升级验证记录、工具链说明
 | `aihub:firmware` | 控制台 → 面板 | 下达清单里选定的固件（`detail` 含 download 地址与 sha256） |
 | `aihub:connection-prepared` | 面板 → 控制台 | 配网信息已就绪，控制台可刷新设备状态 |
 
+模块在**所有面板元素绑定完成之后**注册 `window.AIHubFlasher`（`{client, module}`）。
+控制台先按需 `import` 这个模块，再检查该全局：存在才显示刷机面板，否则退回文字向导。
+面板的 DOM 骨架（`#echoear-installer` 那一段）归属控制台仓库，模块加载时按 id 直接绑定，
+所以两边改 id 必须同时改。
+
 锁名 `aihub-echoear-usb` 用于串口互斥。改名必须两侧同时改。
 
 ## 刷机页怎么打开
@@ -80,20 +85,19 @@ docs/                     USB 接入、升级验证记录、工具链说明
 **Web Serial 只在 secure context 下可用**：`https://` 或 `http://localhost`。
 直接双击 `flash/` 里的 HTML 是 `file://`，浏览器会拒绝授权串口。
 
-三种可用方式：
+两种可用方式：
 
 ```sh
-# 1) 本地起一个静态服务（最简单）
-cd flash && python3 -m http.server 8080
-# 然后打开 http://localhost:8080/
+# 1) 由 aihub-server 的网页控制台托管（正常路径）
+#    服务端把本仓库的 flash/ 挂在 /firmware 下：
+#    AIHUB_FIRMWARE_ROOT=<workspace>/aihub-firmware/flash
+#    浏览器打开 http://127.0.0.1:8765/#connections，选中喵伴即可
 
-# 2) 由 aihub-server 的网页控制台托管（控制台会加载这个模块）
-
-# 3) 发布到 https 站点（例如 GitHub Pages），此时完全不需要后端
+# 2) 发布到 https 站点（例如 GitHub Pages），此时完全不需要后端
 ```
 
-当前 `flash/` 还没有自己的入口 HTML——它作为模块被控制台加载。方案 (1) 需要一个
-最薄的 `index.html` 才能使用，尚未提供。
+本仓库**不带入口 HTML**：面板骨架在 `aihub-web/public/index.html`，模块只负责绑定和
+串口逻辑。单独起静态服务（`python3 -m http.server`）只会得到没有面板的裸模块。
 
 ## 构建固件
 

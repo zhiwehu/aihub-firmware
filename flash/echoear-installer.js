@@ -276,3 +276,6 @@ setInterval(async()=>{
 window.addEventListener('beforeunload',event=>{if(busy){event.preventDefault();event.returnValue='';}});
 window.addEventListener('pagehide',()=>{disconnect().catch(()=>{});});
 controls();
+// 控制台契约：只有在面板元素全部绑定成功后才声明自己可用。网页控制台据此决定
+// 显示刷机面板还是退回文字向导（见 aihub-web README「刷机助手不在这个仓库」）。
+window.AIHubFlasher={client:'echoear-s3',module:'echoear-installer'};
