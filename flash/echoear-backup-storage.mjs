@@ -9,24 +9,32 @@ async function checked(response){
  throw new Error(value?.error?.code||'backup_storage_failed');
 }
 export async function saveAutomaticBackup(bytes,device){
- await validateDeviceBackup(await decodeDeviceBackup(bytes),device);
- const response=await checked(await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:bytes}));
+ const parsed=await decodeDeviceBackup(bytes);await validateDeviceBackup(parsed,device);
+ const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:bytes});
+ // A server that still only knows the 16/32MB container answers 400 here.
+ if(response.status===400)throw new Error('server_outdated');
+ await checked(response);
  const {id}=await response.json();if(!identity.test(id))throw new Error('backup_storage_failed');
  const saved=new Uint8Array(await(await checked(await fetch(endpoint+'/'+id+'?'+query(device)))).arrayBuffer());
  if(await sha256(saved)!==await sha256(bytes))throw new Error('backup_checksum_failed');
- const parsed=await decodeDeviceBackup(saved);await validateDeviceBackup(parsed,device);return parsed;
+ return await decodeDeviceBackup(saved);
 }
-export async function latestAutomaticBackup(device){
+// `kind` filters by what the caller is about to do: a settings backup cannot
+// undo a firmware upgrade, so an upgrade only accepts a full one.
+export async function latestAutomaticBackup(device,{kind}={}){
  let before='';
  for(;;){
   const params=query(device);if(before)params.set('before',before);
   const response=await checked(await fetch(endpoint+'/latest?'+params)),id=response.headers.get('X-Backup-Id');
   if(!identity.test(id)||before&&id>=before)throw new Error('backup_storage_failed');
   const bytes=new Uint8Array(await response.arrayBuffer());
-  try{const parsed=await decodeDeviceBackup(bytes);await validateDeviceBackup(parsed,device);return parsed;}
+  let backup;
+  try{backup=await decodeDeviceBackup(bytes);await validateDeviceBackup(backup,device);}
   catch(error){
    if(!/^(?:invalid_device_backup|backup_checksum_failed|backup_wrong_device|invalid_image|wrong_image|invalid_image_checksum|invalid_image_hash|invalid_ota_data|pending_ota_validation)$/.test(error.message))throw error;
-   before=id;
+   before=id;continue;
   }
+  if(!kind||backup.kind===kind)return backup;
+  before=id;
  }
 }

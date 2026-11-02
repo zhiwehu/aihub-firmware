@@ -20,23 +20,37 @@ export function md5(bytes){
 }
 function words(...values){const bytes=new Uint8Array(values.length*4),view=new DataView(bytes.buffer);values.forEach((v,i)=>view.setUint32(i*4,v,true));return bytes;}
 function fail(code){throw new Error(code);}
+export const READ_FLASH_BLOCK=4096,FALLBACK_FLASH_BLOCK=1024;
+// Espressif's own browser loader asks the stub for 4KB frames and acknowledges
+// the byte count actually received, which is ~4x fewer USB round trips than
+// 1KB frames. A frame may still arrive shorter than requested (a slow receive
+// loop or a link hiccup), so the loop accepts any frame that fits and lets the
+// trailing MD5 decide whether the command succeeded.
+async function readFlashOnce(loader,address,size,block,progress){
+ // One frame in flight; acknowledge the received byte count before the next burst.
+ if(await loader.checkCommand('read flash',loader.ESP_READ_FLASH,words(address,size,block,1))!==0)fail('flash_read_rejected');
+ const data=new Uint8Array(size),timeout=loader.FLASH_READ_TIMEOUT;let offset=0;
+ while(offset<size){
+  const packet=await loader.transport.read(timeout);
+  if(!(packet instanceof Uint8Array)||!packet.length||packet.length>block||offset+packet.length>size){
+   const error=new Error('flash_read_incomplete');error.readAddress=address+offset;
+   error.expectedBytes=Math.min(block,size-offset);error.receivedBytes=packet?.length??-1;throw error;
+  }
+  data.set(packet,offset);offset+=packet.length;
+  await loader.transport.write(words(offset));if(progress)progress(packet,offset,size);
+ }
+ // Consume the digest before any subsequent command can flush or misread it.
+ const digest=await loader.transport.read(timeout),computed=md5(data);
+ if(!(digest instanceof Uint8Array)||digest.length!==16||!computed.every((v,i)=>v===digest[i]))fail('flash_read_checksum_failed');
+ return data;
+}
 export function installFlashReader(loader){
+ // Callers may pin the frame size after probing it; 1KB is the slow fallback.
+ loader.FLASH_READ_BLOCK||=READ_FLASH_BLOCK;
  loader.readFlash=async function(address,size,progress){
   if(!this.IS_STUB)fail('flash_stub_required');
   if(!Number.isInteger(address)||address<0||!Number.isInteger(size)||size<1||size>64*1024||address+size>32*1024*1024)fail('flash_read_range');
-  // One 1KB packet in flight; acknowledge before the next USB burst.
-  if(await this.checkCommand('read flash',this.ESP_READ_FLASH,words(address,size,1024,1))!==0)fail('flash_read_rejected');
-  const data=new Uint8Array(size),timeout=this.FLASH_READ_TIMEOUT;
-  for(let offset=0;offset<size;){
-   const packet=await this.transport.read(timeout),expected=Math.min(1024,size-offset);
-   if(!(packet instanceof Uint8Array)||packet.length!==expected){const error=new Error('flash_read_incomplete');error.readAddress=address+offset;error.expectedBytes=expected;error.receivedBytes=packet?.length??-1;throw error;}
-   data.set(packet,offset);offset+=packet.length;
-   await this.transport.write(words(offset));if(progress)progress(packet,offset,size);
-  }
-  // Consume the digest before any subsequent command can flush or misread it.
-  const digest=await this.transport.read(timeout),computed=md5(data);
-  if(!(digest instanceof Uint8Array)||digest.length!==16||!computed.every((v,i)=>v===digest[i]))fail('flash_read_checksum_failed');
-  return data;
+  return readFlashOnce(this,address,size,this.FLASH_READ_BLOCK||READ_FLASH_BLOCK,progress);
  };
  return loader;
 }

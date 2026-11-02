@@ -1,8 +1,16 @@
-import {retryableFlashRead} from './echoear-flash-reader.mjs';
+import {retryableFlashRead,md5} from './echoear-flash-reader.mjs';
 // Exact existing-device upgrade profile. No arbitrary-address or erase-all API.
 export const PROFILE={board:'echoear-s3',flashSizes:['16MB','32MB'],table:0x8000,nvs:0x9000,nvsSize:0x4000,
  ota:0xd000,otaSize:0x2000,apps:[0x20000,0x410000],appSize:0x3f0000};
+// Only regions this project can ever change are backed up. Assets, bootloader
+// and the partition table are written by nothing here, and the 15MB of unused
+// space is never read back.
+export const REGIONS={table:{address:PROFILE.table,size:4096},otadata:{address:PROFILE.ota,size:PROFILE.otaSize},
+ nvs:{address:PROFILE.nvs,size:PROFILE.nvsSize},app0:{address:PROFILE.apps[0],size:PROFILE.appSize},
+ app1:{address:PROFILE.apps[1],size:PROFILE.appSize}};
+export const SETTINGS_REGIONS=['table','otadata','nvs'],FULL_REGIONS=['table','otadata','nvs','app0','app1'];
 const fail=code=>{throw new Error(code);};
+export const hex=bytes=>Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
 // Only verified complete blocks advance progress. Backup callers may reconnect
 // after a transient read failure, with a global cap and identity/snapshot check.
 export async function readFlashBounded(loader,address,size,progress=()=>{},options={}){
@@ -22,7 +30,40 @@ export async function readFlashBounded(loader,address,size,progress=()=>{},optio
  }
  return data;
 }
-export async function sha256(bytes){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(x=>x.toString(16).padStart(2,'0')).join('');}
+export const regionBytes=names=>names.reduce((total,name)=>total+REGIONS[name].size,0);
+// Read named regions in one pass. Regions that already exist in `previous` and
+// whose on-device digest is unchanged are reused, so a repeat backup only pays
+// for what actually changed.
+export async function readDeviceRegions(loader,names,previous=null,progress=()=>{},options={}){
+ const total=regionBytes(names),data={};let done=0,active=loader,recoveries=0;
+ const reconnect=async value=>{
+  if(!options.recover||recoveries>=8)fail('flash_recovery_failed');
+  const next=await options.recover({...value,attempt:++recoveries,completed:done});
+  if(!next||typeof next.readFlash!=='function')fail('flash_recovery_failed');
+  return(active=next);
+ };
+ for(const name of names){
+  const {address,size}=REGIONS[name];
+  // Settings live in the first 64KB and are cheap: never trust a cached copy.
+  const reusable=name.startsWith('app')&&previous?.[name]?.length===size&&typeof active.flashMd5sum==='function';
+  let unchanged=false;
+  if(reusable){
+   try{unchanged=(await active.flashMd5sum(address,size)).toLowerCase()===hex(md5(previous[name]));}
+   catch(error){
+    // No guessing after a broken checksum command. Reconnect before reading.
+    if(!options.recover)throw error;
+    await reconnect({name,address});
+   }
+  }
+  if(unchanged)data[name]=previous[name].slice();
+  else data[name]=await readFlashBounded(active,address,size,(_chunk,read)=>progress(done+read,total),
+   options.recover?{recover:value=>reconnect({...value,name,regions:data})}:{});
+  done+=size;progress(done,total);
+ }
+ if(done!==total)fail('flash_read_incomplete');
+ return data;
+}
+export async function sha256(bytes){return hex(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)));}
 export function crc32(bytes,seed=0xffffffff){let crc=(seed^0xffffffff)>>>0;for(const b of bytes){crc^=b;for(let bit=0;bit<8;bit++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return(crc^0xffffffff)>>>0;}
 export function validateSecurity(info,flashSize){
  if(!info||info.chipId!==9||!PROFILE.flashSizes.includes(flashSize))fail('wrong_device');
@@ -59,10 +100,20 @@ export async function inspectImage(raw){
  const checksumOffset=Math.ceil((pos+1)/16)*16-1;
  if(checksumOffset>=raw.length||raw[checksumOffset]!==checksum||raw[23]!==1)fail('invalid_image_checksum');
  const end=checksumOffset+33;if(end>raw.length)fail('invalid_image');
- const embedded=Array.from(raw.subarray(checksumOffset+1,end)).map(x=>x.toString(16).padStart(2,'0')).join('');
+ const embedded=hex(raw.subarray(checksumOffset+1,end));
  if(await sha256(raw.subarray(0,checksumOffset+1))!==embedded)fail('invalid_image_hash');
  const text=offset=>new TextDecoder().decode(raw.subarray(offset,offset+32)).split('\0')[0];
  return{data:raw.slice(0,end),sha256:await sha256(raw.subarray(0,end)),version:text(48),project:text(80)};
+}
+// Header-only identity: enough to name the firmware on screen and to size the
+// image, without transferring and hashing the whole application.
+export async function inspectImageHeader(loader,address){
+ const header=await readFlashBounded(loader,address,288);
+ if(header[0]!==0xe9||header[1]<1||header[1]>16||header[23]!==1)fail('invalid_image');
+ const view=new DataView(header.buffer,header.byteOffset,header.byteLength);
+ if(view.getUint16(12,true)!==9||(header[3]>>4)!==4||view.getUint32(32,true)!==0xabcd5432)fail('wrong_image');
+ const text=offset=>new TextDecoder().decode(header.subarray(offset,offset+32)).split('\0')[0];
+ return{version:text(48),project:text(80),header};
 }
 export async function validateLayout(table,install){
  if(!install||install.board!==PROFILE.board||install.partition_bytes!==3072||table.length!==4096||
@@ -106,15 +157,34 @@ export function validateBackup(backup,device){
  if(backup.regions.length!==3||new Set(backup.regions.map(r=>r.name)).size!==3)fail('invalid_backup');
  for(const r of backup.regions){const a=allowed[r.name];if(!a||r.address!==a[0]||r.data.length!==a[1])fail('invalid_backup_range');}
 }
-export async function inspectRecoveryDevice(loader,manifest,progress=()=>{}){
+// Identity of a device, without its application bytes: chip, Flash, MAC,
+// partition table and boot record. A broken OTA record is reported but does not
+// block Wi-Fi setup, which only ever writes NVS.
+export async function inspectDeviceIdentity(loader,manifest,progress=()=>{}){
  progress('正在读取芯片安全状态和 Flash 容量…',0);
  const security=await loader.getSecurityInfo(),flashSize=await loader.detectFlashSize();
  progress('检测到芯片 ID '+security.chipId+'，实际 Flash '+(flashSize||'未知')+'，正在核对分区。',0);
  validateSecurity(security,flashSize);
  const mac=await loader.chip.readMac(loader);
  const table=await readFlashBounded(loader,PROFILE.table,4096);const layout=await validateLayout(table,manifest.install);
- progress('分区检查通过，正在读取启动分区…',0);
- return{mac,layout,flashSize,table};
+ const ota=await loader.readFlash(PROFILE.ota,PROFILE.otaSize);let boot=null,bootError=null;
+ try{boot=selectBoot(ota);}catch(error){bootError=error.message;}
+ // A damaged application must not block Wi-Fi setup: only NVS is written.
+ let image=null,imageError=null;
+ try{image=await inspectImageHeader(loader,PROFILE.apps[boot?.slot??0]);}catch(error){imageError=error.message;}
+ return{mac,layout,flashSize,table,ota,boot,bootError,image,imageError};
+}
+// Full check used only when an application is about to be installed: it hashes
+// the running firmware so an unknown build cannot be overwritten by accident.
+export async function inspectDevice(loader,manifest,progress=()=>{},identity=null){
+ const base=identity||await inspectDeviceIdentity(loader,manifest,progress);
+ if(!base.boot)fail(base.bootError||'invalid_ota_data');
+ const bytes=await readApplication(loader,PROFILE.apps[base.boot.slot],(p,w,t)=>progress('正在读取现有应用以核对固件（'+Math.round(w/1024)+' KB / '+Math.round(t/1024)+' KB），此时不写入设备。',w/t));
+ progress('应用读取完成，正在校验固件指纹…',1);
+ const image=await inspectImage(bytes);
+ if(!(manifest.install.upgrade_from_sha256||[]).includes(image.sha256)&&image.sha256!==manifest.sha256)fail('unrecognized_existing_firmware');
+ if(base.boot.sequence>=0xfffffffd)fail('invalid_ota_sequence');
+ return{...base,current:image,targetSlot:1-base.boot.slot};
 }
 export async function readApplication(loader,address,progress=()=>{}){
  const header=await readFlashBounded(loader,address,24);
@@ -130,20 +200,16 @@ export async function readApplication(loader,address,progress=()=>{}){
  if(length>PROFILE.appSize||length<288)fail('invalid_image');
  return readFlashBounded(loader,address,length,progress);
 }
-export async function inspectDevice(loader,manifest,progress=()=>{}){
- const identity=await inspectRecoveryDevice(loader,manifest,progress);
- const {mac,layout,flashSize,table}=identity;
- const ota=await loader.readFlash(PROFILE.ota,PROFILE.otaSize),boot=selectBoot(ota);
- const bytes=await readApplication(loader,PROFILE.apps[boot.slot],(_p,w,t)=>progress('正在读取现有应用以核对固件（'+Math.round(w/1024)+' / '+Math.round(t/1024)+' KB），此时不写入设备。',w/t));
- progress('应用读取完成，正在校验固件指纹…',1);
- const image=await inspectImage(bytes);
- if(!(manifest.install.upgrade_from_sha256||[]).includes(image.sha256)&&image.sha256!==manifest.sha256)fail('unrecognized_existing_firmware');
- if(boot.sequence>=0xfffffffd)fail('invalid_ota_sequence');
- return{mac,layout,flashSize,boot,ota,table,current:image,targetSlot:1-boot.slot};
-}
+// A device-computed MD5 of the written region is as strong as a full read-back
+// for detecting a failed write, and costs one command instead of megabytes.
 export async function writeAndVerify(loader,address,data,progress){
  await loader.writeFlash({fileArray:[{address,data}],flashSize:'keep',flashMode:'keep',flashFreq:'keep',eraseAll:false,compress:true,
   reportProgress:(_i,w,t)=>progress?.(w/t)});
+ if(typeof loader.flashMd5sum==='function'){
+  const digest=String(await loader.flashMd5sum(address,data.length)).toLowerCase();
+  if(digest!==hex(md5(data)))fail('flash_verification_failed');
+  return;
+ }
  const actual=await readFlashBounded(loader,address,data.length);
  if(await sha256(actual)!==await sha256(data))fail('flash_verification_failed');
 }

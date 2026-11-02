@@ -23,7 +23,7 @@ tools/
 ├── device/               串口与 JTAG 工具（见 docs/TOOLKIT.md）
 └── release/              镜像校验、隔离构建、发布打包
 
-tests/                    9 个 C++ 逻辑测试 + 9 个 Node 测试
+tests/                    9 个 C++ 逻辑测试 + 10 个 Node 测试
 docs/                     USB 接入、升级验证记录、工具链说明
 ```
 

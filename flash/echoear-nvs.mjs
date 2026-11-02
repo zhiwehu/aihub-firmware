@@ -76,6 +76,18 @@ function entry(ns,key,type,value){
  }
  view(bytes).setUint32(4,entryCRC(bytes),true);return bytes;
 }
+// A stored network is a slot with both an SSID and a password entry, matching
+// what the device itself treats as a usable credential.
+export function hasSavedWifi(raw){
+ const nvs=inspectNvs(raw);
+ const values=new Map(nvs.records.filter(r=>r.ns===nvs.spaces.get('wifi')&&r.type===0x21).map(r=>[r.key,decoder.decode(r.value.subarray(0,-1))]));
+ return Array.from({length:10},(_,i)=>i?String(i):'').some(suffix=>values.get('ssid'+suffix)&&values.has('password'+suffix));
+}
+export function savedWifiSsid(raw){
+ const nvs=inspectNvs(raw),ns=nvs.spaces.get('wifi');
+ const value=nvs.records.find(r=>r.ns===ns&&r.type===0x21&&r.key==='ssid'&&r.value.length>1);
+ return value?decoder.decode(value.value.subarray(0,-1)):'';
+}
 export function connectionNvs(raw,{ssid,password,ota_url,websocket,keepWifi=false}){
  if(!keepWifi&&(typeof ssid!=='string'||encoder.encode(ssid).length<1||encoder.encode(ssid).length>32||ssid.includes('\0')))fail('invalid_wifi');
  if(!keepWifi&&(typeof password!=='string'||encoder.encode(password).length>64||password.includes('\0')||password.length>0&&encoder.encode(password).length<8))fail('invalid_wifi');

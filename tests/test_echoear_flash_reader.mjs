@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {md5,installFlashReader,installSlipReader} from '../flash/echoear-flash-reader.mjs';
+import {md5,installFlashReader,installSlipReader,READ_FLASH_BLOCK,FALLBACK_FLASH_BLOCK} from '../flash/echoear-flash-reader.mjs';
 import {readFlashBounded} from '../flash/echoear-upgrade-core.mjs';
 const digest=data=>new Uint8Array(createHash('md5').update(data).digest());
 test('transport MD5 agrees with independent Node crypto for boundaries and full read blocks',()=>{
@@ -10,22 +10,35 @@ test('transport MD5 agrees with independent Node crypto for boundaries and full 
  }
  assert.equal(Buffer.from(md5(new TextEncoder().encode('abc'))).toString('hex'),'900150983cd24fb0d6963f7d28e17f72');
 });
-function stub(){
- let frames=[],ack=0;const requests=[],acks=[];
+// The stub answers one READ_FLASH command: data frames, then the 16-byte digest.
+function stub({frame=null}={}){
+ let frames=[],ack=0;const requests=[],acks=[],blocks=[];
  const loader={IS_STUB:true,ESP_READ_FLASH:0xd2,FLASH_READ_TIMEOUT:100,
-  async checkCommand(_name,op,payload){assert.equal(frames.length,0,'previous digest must be consumed');assert.equal(op,0xd2);const v=new DataView(payload.buffer);requests.push([v.getUint32(0,true),v.getUint32(4,true)]);assert.equal(v.getUint32(12,true),1);const data=Uint8Array.from({length:v.getUint32(4,true)},(_,i)=>(v.getUint32(0,true)+i)%251);ack=0;const packetSize=v.getUint32(8,true);assert.equal(packetSize,1024);for(let i=0;i<data.length;i+=packetSize)frames.push(data.slice(i,i+packetSize));frames.push(digest(data));return 0;},
+  async checkCommand(_name,op,payload){assert.equal(frames.length,0,'previous digest must be consumed');assert.equal(op,0xd2);const v=new DataView(payload.buffer);requests.push([v.getUint32(0,true),v.getUint32(4,true)]);assert.equal(v.getUint32(12,true),1);const data=Uint8Array.from({length:v.getUint32(4,true)},(_,i)=>(v.getUint32(0,true)+i)%251);ack=0;const packetSize=v.getUint32(8,true);blocks.push(packetSize);for(let i=0;i<data.length;i+=frame||packetSize)frames.push(data.slice(i,i+(frame||packetSize)));frames.push(digest(data));return 0;},
   transport:{async read(){return frames.shift()},async write(bytes){const value=new DataView(bytes.buffer).getUint32(0,true);assert.ok(value>ack);ack=value;acks.push(value);}}
- };return{loader:installFlashReader(loader),requests,acks};
+ };return{loader:installFlashReader(loader),requests,acks,blocks};
 }
-test('consecutive reads consume their digest and acknowledge exact packet offsets',async()=>{
+test('reads ask the stub for 4KB frames and acknowledge exact packet offsets',async()=>{
  const f=stub(),data=await readFlashBounded(f.loader,0,2*65536+123);
  assert.equal(data.length,2*65536+123);assert.deepEqual(f.requests,[[0,65536],[65536,65536],[131072,123]]);
- assert.deepEqual(data,Uint8Array.from({length:data.length},(_,i)=>i%251));assert.equal(f.acks.at(-1),123);
+ assert.deepEqual(f.blocks,[READ_FLASH_BLOCK,READ_FLASH_BLOCK,READ_FLASH_BLOCK]);
+ assert.deepEqual(data,Uint8Array.from({length:data.length},(_,i)=>i%251));
+ assert.equal(f.acks.length,Math.ceil(65536/4096)*2+1);
 });
-test('digest mismatch and truncated packets stop the read',async()=>{
+test('a pinned frame size is honoured after the caller spends the probe budget',async()=>{
+ const f=stub();f.loader.FLASH_READ_BLOCK=FALLBACK_FLASH_BLOCK;
+ await f.loader.readFlash(0,4096);
+ assert.deepEqual(f.blocks,[FALLBACK_FLASH_BLOCK]);assert.equal(f.acks.length,4);
+});
+test('shorter frames than requested are accepted and the digest decides',async()=>{
+ const f=stub({frame:1000}),data=await f.loader.readFlash(0,4096);
+ assert.equal(data.length,4096);assert.deepEqual(f.acks,[1000,2000,3000,4000,4096]);
+});
+test('digest mismatch, overflow and empty frames stop the read',async()=>{
  const f=stub(),read=f.loader.transport.read;f.loader.transport.read=async()=>{const packet=await read();if(packet.length===16)packet[0]^=1;return packet};
  await assert.rejects(()=>f.loader.readFlash(0,4096),/flash_read_checksum_failed/);
- const g=stub();g.loader.transport.read=async()=>new Uint8Array(3);await assert.rejects(()=>g.loader.readFlash(0,4096),/flash_read_incomplete/);
+ const g=stub();g.loader.transport.read=async()=>new Uint8Array(5000);await assert.rejects(()=>g.loader.readFlash(0,4096),/flash_read_incomplete/);
+ const h=stub();h.loader.transport.read=async()=>new Uint8Array(0);await assert.rejects(()=>h.loader.readFlash(0,4096),/flash_read_incomplete/);
 });
 
 test('transient failures resume at the failed block, retaining verified progress',async()=>{

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {PROFILE,sha256,inspectDevice,encodeBackup,decodeBackup,makeBootRecord} from '../../flash/echoear-upgrade-core.mjs';
+import {captureDeviceBackup} from '../../flash/echoear-device-backup.mjs';
 async function image(version){
  const raw=new Uint8Array(336),v=new DataView(raw.buffer);
  raw[0]=0xe9;raw[1]=1;raw[3]=0x40;v.setUint16(12,9,true);raw[23]=1;
@@ -19,6 +21,7 @@ export async function fixture(){
  const writes=[];
  const loader={chip:{async readMac(){return '90:e5:b1:ae:80:a0'}},async getSecurityInfo(){return{chipId:9,flashCryptCnt:0,parsedFlags:{}}},
   async detectFlashSize(){return'16MB'},async readFlash(address,size){return flash.slice(address,address+size)},
+  async flashMd5sum(address,size){return createHash('md5').update(flash.slice(address,address+size)).digest('hex')},
   async writeFlash(options){assert.equal(options.eraseAll,false);for(const file of options.fileArray){writes.push(file.address);flash.set(file.data,file.address);}}};
  const manifest={sha256:await sha256(next),install:{board:'echoear-s3',partition_bytes:3072,partition_sha256:await sha256(table.subarray(0,3072)),
  upgrade_from_sha256:[await sha256(old)],validated:true}};
@@ -27,4 +30,9 @@ export async function fixture(){
  {name:'nvs',address:PROFILE.nvs,data:flash.slice(PROFILE.nvs,PROFILE.nvs+PROFILE.nvsSize)},
  {name:'otadata',address:PROFILE.ota,data:device.ota},{name:'target',address:PROFILE.apps[1],data:flash.slice(PROFILE.apps[1],PROFILE.apps[1]+PROFILE.appSize)}]));
  return{loader,manifest,device,backup,flash,writes,next,old};
+}
+// Capture through the same code path the browser uses, so the container format,
+// reuse rules and metadata stay under test.
+export async function capture(f,kind='full',{previous=null}={}){
+ return captureDeviceBackup(f.device,f.loader,{kind,previous});
 }
