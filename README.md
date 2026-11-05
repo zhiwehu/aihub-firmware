@@ -27,10 +27,10 @@ tests/                    9 个 C++ 逻辑测试 + 10 个 Node 测试
 docs/                     USB 接入、升级验证记录、工具链说明
 ```
 
-## 与 `aihub-server` 的接口
+## 与 `aihub` 核心仓库的接口
 
 本仓库**不提供**任何网络端点。设备开机后轮询的 OTA 接口、设备令牌、局域网监听
-都归 `aihub-server`。两个仓库之间只有两个契约：
+都归核心仓库 `aihub`（Python 包仍名为 `aihub_server`）。两个仓库之间只有两个契约：
 
 ### 1. OTA 地址
 
@@ -177,3 +177,5 @@ protocol or NVS layout change is required. Failed/repeated setup can leave unuse
 credentials; administrators can revoke them in the console. Keep old credentials
 until the newly provisioned connection is verified. Existing devices are not
 reconfigured automatically; legacy shared-token setup remains server-compatible.
+
+三仓布局下，本仓库继续独立构建与发布。核心后台通过显式 `AIHUB_FIRMWARE_ROOT` 或部署发布包挂载 `flash/`，不依赖旧六仓平级目录。浏览器聊天客户端属于独立的 `aihub-client-web`。
