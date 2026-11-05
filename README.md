@@ -167,3 +167,13 @@ node --test tests/*.mjs
 原创代码 MIT（见 [LICENSE](LICENSE)），派生代码保留原版权声明，详见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。固件基于上游 ESP-IDF 与小智
 生态，上游来源见 [firmware/README.md](firmware/README.md)。
+
+### Per-device WebSocket provisioning
+
+The USB setup page submits the inspected device MAC to the current server's
+prepare API and writes the returned dedicated token/OTA URL into the existing NVS
+fields. Deploy the updated server before using this setup page. No firmware
+protocol or NVS layout change is required. Failed/repeated setup can leave unused
+credentials; administrators can revoke them in the console. Keep old credentials
+until the newly provisioned connection is verified. Existing devices are not
+reconfigured automatically; legacy shared-token setup remains server-compatible.

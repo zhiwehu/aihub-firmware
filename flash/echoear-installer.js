@@ -311,7 +311,7 @@ $('echoear-disconnect').onclick=()=>action(async()=>{await disconnect();status('
 async function prepareConnection(){
  try{
   const host=$('echoear-network-host').value;
-  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(host?{host}:{})});
+  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...(host?{host}:{}),device_id:device.mac})});
   if(response.status===401)throw new Error('请先使用管理员账号登录。');
   const value=await setupResponse(response);
   if(!response.ok){
@@ -336,7 +336,7 @@ $('echoear-network-form').onsubmit=event=>{
 };
 $('echoear-copy-setup').onclick=async()=>{
  try{
-  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(device?.mac?{device_id:device.mac}:{})});
   if(response.status===401)throw new Error('请先使用管理员账号登录。');
   const value=await setupResponse(response);if(!response.ok)throw new Error(value.error?.message||'请先让管理员开启设备连接服务。');
   await navigator.clipboard.writeText(value.ota_url);$('echoear-setup-status').textContent='连接入口已复制。连接设备热点后，在设备配网页的“高级设置 → 自定义 OTA 地址”粘贴它并保存，再设置 Wi-Fi。';

@@ -16,7 +16,7 @@ function installer(){
  const steps=[1,2,3].map(n=>({...node(),dataset:{usbStep:String(n)}})),panels=[1,2,3].map(n=>({...node(),dataset:{usbPanel:String(n)}}));
  const document={hidden:false,getElementById(id){if(!nodes.has(id))nodes.set(id,node());return nodes.get(id)},createElement:node,
   querySelectorAll(selector){return selector==='[data-usb-step]'?steps:panels}};
- const calls={captures:[],saved:[],applied:[],upgraded:[],downloads:0};
+ const calls={captures:[],saved:[],applied:[],upgraded:[],downloads:0,prepare:[]};
  const context={PROFILE,REGIONS:{nvs:{address:PROFILE.nvs,size:PROFILE.nvsSize}},READ_FLASH_BLOCK:4096,FALLBACK_FLASH_BLOCK:1024,hex:()=>'',
   md5:()=>new Uint8Array(16),installFlashReader:x=>x,installSlipReader:x=>x,setupResponse,
   hasSavedWifi:()=>state.savedWifi,savedWifiSsid:()=>'home-wifi',
@@ -33,8 +33,8 @@ function installer(){
   window:{isSecureContext:true,addEventListener(){},dispatchEvent(){}},
   CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail}},
   TextEncoder,TextDecoder,console:{warn(){}},setInterval(){},setTimeout(){},
-  fetch:async url=>{
-   if(String(url).includes('/prepare'))return Response.json({ota_url:'http://10.0.0.2:8766/xiaozhi/ota/token/',websocket:{url:'ws://10.0.0.2:8766/xiaozhi/v1/',token:'t'.repeat(20),version:1}});
+  fetch:async (url,options)=>{
+   if(String(url).includes('/prepare')){calls.prepare.push(JSON.parse(options.body));return Response.json({ota_url:'http://10.0.0.2:8766/xiaozhi/ota/token/',websocket:{url:'ws://10.0.0.2:8766/xiaozhi/v1/',token:'t'.repeat(20),version:1}});}
    calls.downloads++;return new Response(new Uint8Array(64));
   }};
  const state={savedWifi:false};
@@ -60,6 +60,7 @@ test('a device that already stores Wi-Fi is provisioned from a single click',asy
  assert.deepEqual(app.calls.captures,['settings'],'without a firmware update only the settings are backed up');
  assert.deepEqual(app.calls.applied,['settings']);
  assert.equal(app.calls.downloads,0);
+ assert.equal(app.calls.prepare[0].device_id,device().mac);
 });
 test('a device with no stored Wi-Fi asks for the credentials instead of failing late',()=>{
  const app=installer();
