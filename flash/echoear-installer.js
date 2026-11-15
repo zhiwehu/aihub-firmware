@@ -80,7 +80,7 @@ $('echoear-wifi-mode').onchange=wifiMode;$('echoear-wifi-open').onchange=wifiMod
 function controls(){
  const supported=!!navigator.serial&&!!window.isSecureContext;
  $('echoear-serial-note').textContent=supported?'使用数据线连接猫头的 USB 接口。检查会暂时进入下载模式，期间停止联网对话；检查或备份结束后点“断开 USB”让设备重启。':'请用电脑上的 Chrome 或 Edge，通过 HTTPS 或本机 localhost 打开本页面。';
- $('echoear-connect').disabled=busy||!supported||!release?.install;
+ $('echoear-connect').disabled=busy||!supported;
  $('echoear-backup').disabled=busy||!device||!thisComputer;
  $('echoear-upgrade').disabled=busy||!device||!thisComputer||release?.install?.validated!==true;
  $('echoear-restore').disabled=busy||!device||!thisComputer;

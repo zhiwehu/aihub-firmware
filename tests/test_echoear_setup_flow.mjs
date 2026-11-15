@@ -50,6 +50,25 @@ function installer(){
 }
 const device=()=>({mac:'90:e5:b1:ae:80:a0',layout:'a'.repeat(64),flashSize:'16MB',ota:new Uint8Array(8192),
  boot:{slot:0,sequence:1,record:1},image:{version:'2.0.5'}});
+test('USB connection without a firmware release permits setup but keeps upgrades disabled',()=>{
+ const app=installer();
+ app.api.controls();
+ assert.equal(app.nodes.get('echoear-connect').disabled,false);
+ app.api.setDevice(device());app.api.setSaved(true);
+ assert.equal(app.nodes.get('echoear-open-network').disabled,false);
+ assert.equal(app.nodes.get('echoear-setup').disabled,false);
+ assert.equal(app.nodes.get('echoear-upgrade').disabled,true);
+ assert.equal(app.nodes.get('echoear-update-with-setup').disabled,true);
+});
+test('USB connection requires Web Serial in a secure browser context',()=>{
+ for(const unsupported of ['serial','secure']){
+  const app=installer();
+  if(unsupported==='serial')delete app.context.navigator.serial;
+  else app.context.window.isSecureContext=false;
+  app.api.controls();
+  assert.equal(app.nodes.get('echoear-connect').disabled,true);
+ }
+});
 test('a device that already stores Wi-Fi is provisioned from a single click',async()=>{
  const app=installer();
  app.api.setDevice(device());app.api.setSaved(true);

@@ -1,9 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {fixture,capture} from './fixtures/echoear-loader.mjs';
 import {PROFILE,sha256,upgrade,inspectDeviceIdentity,inspectDevice} from '../flash/echoear-upgrade-core.mjs';
 import {captureDeviceBackup,applyNetwork,restoreDeviceBackup} from '../flash/echoear-device-backup.mjs';
 const same=(a,b)=>assert.equal(Buffer.compare(Buffer.from(a),Buffer.from(b)),0);
+test('without a release, identity and settings-only provisioning still work',async()=>{
+ const f=await fixture();
+ for(const manifest of [undefined,{}]){
+  const identity=await inspectDeviceIdentity(f.loader,manifest);
+  assert.equal(identity.mac,f.device.mac);
+  assert.equal(identity.layout,f.device.layout);
+ }
+ const identity=await inspectDeviceIdentity(f.loader);
+ const {backup}=await captureDeviceBackup(identity,f.loader,{kind:'settings'});
+ await applyNetwork(f.loader,identity,backup,new Uint8Array(PROFILE.nvsSize).fill(4));
+ assert.deepEqual(f.writes,[PROFILE.nvs]);
+});
+test('without a release, changed partitions and unexpected table data are rejected before writing',async()=>{
+ for(const offset of [4,12,28,6*32]){
+  const f=await fixture();f.flash[PROFILE.table+offset]^=1;
+  await assert.rejects(()=>inspectDeviceIdentity(f.loader),/unsupported_partition_table/);
+  assert.deepEqual(f.writes,[]);
+ }
+});
+test('release-free inspection verifies the optional ESP-IDF partition MD5 record',async()=>{
+ const f=await fixture(),end=6*32;
+ const table=f.flash.subarray(PROFILE.table,PROFILE.table+4096);
+ table[end]=0xeb;table[end+1]=0xeb;
+ table.set(createHash('md5').update(table.subarray(0,end)).digest(),end+16);
+ const identity=await inspectDeviceIdentity(f.loader);
+ assert.equal(identity.layout,await sha256(table.subarray(0,3072)));
+ table[end+16]^=1;
+ await assert.rejects(()=>inspectDeviceIdentity(f.loader),/unsupported_partition_table/);
+ assert.deepEqual(f.writes,[]);
+});
 async function prepared(kind='full'){const f=await fixture();const {bytes,backup}=await capture(f,kind);return{...f,bytes,full:backup,kind};}
 test('provisioning backs up only settings and writes only NVS',async()=>{
  const f=await prepared('settings'),nvs=new Uint8Array(PROFILE.nvsSize).fill(3);

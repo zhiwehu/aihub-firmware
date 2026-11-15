@@ -116,8 +116,9 @@ export async function inspectImageHeader(loader,address){
  return{version:text(48),project:text(80),header};
 }
 export async function validateLayout(table,install){
- if(!install||install.board!==PROFILE.board||install.partition_bytes!==3072||table.length!==4096||
-  await sha256(table.subarray(0,3072))!==install.partition_sha256)fail('unsupported_partition_table');
+ if(table.length!==4096)fail('unsupported_partition_table');
+ const digest=await sha256(table.subarray(0,3072));
+ if(install&&(install.board!==PROFILE.board||install.partition_bytes!==3072||digest!==install.partition_sha256))fail('unsupported_partition_table');
  const expected=[['nvs',1,2,0x9000,0x4000],['otadata',1,0,0xd000,0x2000],['phy_init',1,1,0xf000,0x1000],
  ['ota_0',0,16,0x20000,0x3f0000],['ota_1',0,17,0x410000,0x3f0000],['assets',1,130,0x800000,0x800000]];
  const view=new DataView(table.buffer,table.byteOffset,table.byteLength);
@@ -127,7 +128,18 @@ export async function validateLayout(table,install){
    view.getUint32(p+4,true)!==address||view.getUint32(p+8,true)!==size||view.getUint32(p+28,true)!==0||
    new TextDecoder().decode(table.subarray(p+12,p+28)).split('\0')[0]!==name)fail('unsupported_partition_table');
  }
- return install.partition_sha256;
+ // Without a release, accept only the exact supported entries followed by
+ // erased space, with an optional valid ESP-IDF partition MD5 record.
+ if(!install){
+  let end=expected.length*32;
+  if(view.getUint16(end,true)===0xebeb){
+   if(!table.subarray(end+2,end+16).every(b=>b===255)||
+    hex(table.subarray(end+16,end+32))!==hex(md5(table.subarray(0,end))))fail('unsupported_partition_table');
+   end+=32;
+  }
+  if(!table.subarray(end,3072).every(b=>b===255))fail('unsupported_partition_table');
+ }
+ return digest;
 }
 const backupMagic=new TextEncoder().encode('VOICEHUB-BACKUP/1\n');
 export async function encodeBackup(identity,regions){
@@ -166,7 +178,7 @@ export async function inspectDeviceIdentity(loader,manifest,progress=()=>{}){
  progress('检测到芯片 ID '+security.chipId+'，实际 Flash '+(flashSize||'未知')+'，正在核对分区。',0);
  validateSecurity(security,flashSize);
  const mac=await loader.chip.readMac(loader);
- const table=await readFlashBounded(loader,PROFILE.table,4096);const layout=await validateLayout(table,manifest.install);
+ const table=await readFlashBounded(loader,PROFILE.table,4096);const layout=await validateLayout(table,manifest?.install);
  const ota=await loader.readFlash(PROFILE.ota,PROFILE.otaSize);let boot=null,bootError=null;
  try{boot=selectBoot(ota);}catch(error){bootError=error.message;}
  // A damaged application must not block Wi-Fi setup: only NVS is written.

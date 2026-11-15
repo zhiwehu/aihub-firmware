@@ -170,6 +170,9 @@ node --test tests/*.mjs
 
 ### Per-device WebSocket provisioning
 
+USB 读取设备和配网不要求服务端提供固件安装包。已有兼容固件时，助手会独立核对芯片与
+受支持的分区布局，并仅备份、更新连接设置；安装或升级应用仍要求经过实机验收的发布包。
+
 The USB setup page submits the inspected device MAC to the current server's
 prepare API and writes the returned dedicated token/OTA URL into the existing NVS
 fields. Deploy the updated server before using this setup page. No firmware
