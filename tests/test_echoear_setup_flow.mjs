@@ -88,6 +88,20 @@ test('a device with no stored Wi-Fi asks for the credentials instead of failing 
  assert.equal(app.nodes.get('echoear-network-intro').hidden,true);
  assert.equal(app.nodes.get('echoear-other-wifi').hidden,true);
 });
+test('daily setup requires a visible host and cannot upgrade firmware',async()=>{
+ const app=installer();
+ app.api.setDevice(device());app.api.setSaved(true);
+ app.nodes.get('echoear-installer').dataset.requireHost='true';
+ app.nodes.get('echoear-installer').dataset.mode='setup';
+ app.api.controls();assert.equal(app.nodes.get('echoear-open-network').disabled,true);
+ app.nodes.get('echoear-network-host').value='192.168.0.100';
+ app.api.setRelease({install:{validated:true},version:'test',download:'/firmware/application.bin',sha256:'a'.repeat(64)});
+ app.nodes.get('echoear-update-with-setup').checked=true;
+ app.api.controls();assert.equal(app.nodes.get('echoear-open-network').disabled,false);
+ await app.nodes.get('echoear-open-network').onclick();
+ assert.equal(app.calls.prepare[0].host,'192.168.0.100');
+ assert.deepEqual(app.calls.captures,['settings']);assert.deepEqual(app.calls.upgraded,[]);
+});
 test('opting into a firmware update backs up both application slots first',async()=>{
  const app=installer();
  app.api.setDevice(device());app.api.setSaved(true);

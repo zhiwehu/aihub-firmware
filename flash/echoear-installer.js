@@ -76,23 +76,26 @@ $('echoear-other-wifi').onclick=()=>{if(busy)return;$('echoear-other-wifi').hidd
 };
 $('echoear-open-network').onclick=()=>{if(busy||!device)return undefined;return savedWifi?action(()=>provision({keepWifi:true})):showNetworkForm();};
 $('echoear-update-with-setup').onchange=controls;
+$('echoear-network-host').oninput=controls;$('echoear-network-host').onchange=controls;
 $('echoear-wifi-mode').onchange=wifiMode;$('echoear-wifi-open').onchange=wifiMode;
 function controls(){
  const supported=!!navigator.serial&&!!window.isSecureContext;
+ const networkReady=$('echoear-installer').dataset.requireHost!=='true'||!!$('echoear-network-host').value.trim();
  $('echoear-serial-note').textContent=supported?'使用数据线连接猫头的 USB 接口。检查会暂时进入下载模式，期间停止联网对话；检查或备份结束后点“断开 USB”让设备重启。':'请用电脑上的 Chrome 或 Edge，通过 HTTPS 或本机 localhost 打开本页面。';
  $('echoear-connect').disabled=busy||!supported;
  $('echoear-backup').disabled=busy||!device||!thisComputer;
  $('echoear-upgrade').disabled=busy||!device||!thisComputer||release?.install?.validated!==true;
  $('echoear-restore').disabled=busy||!device||!thisComputer;
  $('echoear-disconnect').disabled=busy||!transport;
- $('echoear-setup').disabled=busy||!device||!supported||!thisComputer;
- $('echoear-open-network').disabled=busy||!device||!supported||!thisComputer;
+ $('echoear-setup').disabled=busy||!device||!supported||!thisComputer||!networkReady;
+ $('echoear-open-network').disabled=busy||!device||!supported||!thisComputer||!networkReady;
  $('echoear-other-wifi').disabled=busy;
  $('echoear-update-with-setup').disabled=busy||release?.install?.validated!==true;
  if(release?.install?.validated!==true)$('echoear-update-with-setup').checked=false;
  $('echoear-update-note').textContent=release?.install?.validated===true?'兼容设备可勾选升级；升级前会自动保存可恢复的原机备份（约 8 MB，1 分钟左右）。':'已有兼容固件可以直接连接。候选新固件尚未完成实机验收，更新选项暂不可选。';
  $('echoear-setup').textContent=release?.install?.validated===true&&$('echoear-update-with-setup').checked?'开始安装并配网':'开始配置';
  $('echoear-network-host').disabled=busy;wifiMode();stepControls();drawNetworkStep();
+ const refresh=document.getElementById('refresh-network');if(refresh)refresh.disabled=busy;
  if(!thisComputer)$('echoear-setup-status').textContent='USB 一体接入请在运行 VoiceHub 的这台电脑上，通过 localhost 打开页面。';
  $('echoear-heard').disabled=!$('echoear-heard').dataset.ready;
  $('echoear-heard').hidden=!$('echoear-heard').dataset.ready;
@@ -108,8 +111,9 @@ async function action(fn){if(busy)return;busy=true;controls();try{await fn();}ca
  // A failed inspection must not retain a stale loader or keep the robot in
  // download mode. Never reset automatically after a failed flash write.
  if(!writing&&!e.keepConnection)await disconnect();
- status(/芯片|Flash|分区|校验|NVS|固件|串口/.test(message)?'暂时无法完成，请重新连接喵伴后再试。':message);
+ status(message);
  $('echoear-technical-details').textContent=stage+'\n'+String(e.message||e.name).slice(0,200);
+ const details=$('echoear-technical-details').closest?.('details');if(details)details.hidden=false;
  }finally{busy=false;writing=false;controls();}}
 async function acquireUsbLock(){
  if(releaseUsbLock||!navigator.locks)return;
@@ -267,7 +271,7 @@ async function provision(credentials){
   if(error.message==='wifi_credentials_required'){$('echoear-wifi-mode').value='new';error.keepConnection=true;showNetworkForm();status('喵伴没有可沿用的 Wi-Fi，请填写名称和密码。',0);}
   throw error;
  }
- const update=$('echoear-update-with-setup').checked&&release?.install?.validated===true;
+ const update=$('echoear-installer').dataset.mode!=='setup'&&$('echoear-update-with-setup').checked&&release?.install?.validated===true;
  if(update){
   const image=await downloadImage();
   await installApplication(image);
@@ -285,7 +289,7 @@ async function provision(credentials){
  const resetRequested=await disconnect();
  status(resetRequested?'设置完成，正在等待喵伴重新连接。':'配置已完成，但自动重启请求失败。请将喵伴完全断电 5 秒后重新开机。',1);
  $('echoear-verify-status').textContent='正在等待喵伴上线，首次连接可能需要一些时间。';
- window.dispatchEvent(new CustomEvent('aihub:connection-prepared'));
+ window.dispatchEvent(new CustomEvent('aihub:connection-prepared',{detail:connection}));
 }
 $('echoear-backup').onclick=()=>action(async()=>{
  status('正在检查已有备份…',0);
@@ -310,15 +314,20 @@ $('echoear-restore').onclick=()=>action(async()=>{
 $('echoear-disconnect').onclick=()=>action(async()=>{await disconnect();status('USB 已断开，设备已尝试重启。');});
 async function prepareConnection(){
  try{
-  const host=$('echoear-network-host').value;
+  const host=$('echoear-network-host').value.trim();
+  if($('echoear-installer').dataset.requireHost==='true'&&!host.trim())throw new Error('请先填写这台电脑的局域网 IP。');
   const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json','X-AIHub-UI':'1'},body:JSON.stringify({...(host?{host}:{}),device_id:device.mac})});
   if(response.status===401)throw new Error('请先使用管理员账号登录。');
   const value=await setupResponse(response);
   if(!response.ok){
    if(value.interfaces?.length){
-    const select=$('echoear-network-host');select.replaceChildren();
-    const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='请选择电脑连接喵伴的网络';select.append(placeholder);
-    for(const item of value.interfaces){const option=document.createElement('option');option.value=item.address;option.textContent=(item.label||item.interface)+'（'+item.address+'）';select.append(option);}
+    const select=$('echoear-network-host');
+    if(select.tagName==='INPUT')window.dispatchEvent(new CustomEvent('aihub:network-choice',{detail:value.interfaces}));
+    else{
+     select.replaceChildren();
+     const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='请选择电脑连接喵伴的网络';select.append(placeholder);
+     for(const item of value.interfaces){const option=document.createElement('option');option.value=item.address;option.textContent=(item.label||item.interface)+'（'+item.address+'）';select.append(option);}
+    }
     $('echoear-network-choice').hidden=false;
    }
    throw new Error(value.error?.message||'设备连接服务准备失败。');

@@ -188,3 +188,7 @@ reconfigured automatically; legacy shared-token setup remains server-compatible.
 新版管理端写请求需要 `X-AIHub-UI: 1`。配网与备份模块已携带该标记，
 必须和 core 的 `/device-setup` 页面配套发布。升级默认关闭，仅在用户明确勾选
 且发布包 `install.validated` 为 true 时执行；日常配网不依赖固件安装包。
+
+日常 `/device-setup` 只显示当前服务器 IP、USB 和 Wi-Fi 接入步骤；设置备份自动执行。
+独立升级、手动备份和恢复在 `/device-setup?mode=maintenance`。配网会读取页面中
+明确显示的服务器 IP，并由 core 再次核对当前宿主机地址，避免沿用旧网卡地址。
