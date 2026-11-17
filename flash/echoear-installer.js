@@ -134,7 +134,7 @@ window.addEventListener('aihub:firmware',event=>{
  const key=JSON.stringify([next?.sha256,next?.install]);
  if(releaseKey!==key){device=upgradeSnapshot=null;expectedMac='';heard=false;$('echoear-heard').dataset.ready='';}
  releaseKey=key;release=next;
- $('echoear-update-with-setup').checked=release?.install?.validated===true;
+ $('echoear-update-with-setup').checked=false;
  $('echoear-release-status').textContent=!release?.install?'安装包还在准备中。已安装适配固件的设备可跳过升级，继续下面的联网设置。':
   release.install.validated?'已提供通过实机验收的版本 '+release.version:'版本 '+release.version+' 已构建，正在等待实机验收；可先检查设备和保存备份。';
  controls();
@@ -311,7 +311,7 @@ $('echoear-disconnect').onclick=()=>action(async()=>{await disconnect();status('
 async function prepareConnection(){
  try{
   const host=$('echoear-network-host').value;
-  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...(host?{host}:{}),device_id:device.mac})});
+  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json','X-AIHub-UI':'1'},body:JSON.stringify({...(host?{host}:{}),device_id:device.mac})});
   if(response.status===401)throw new Error('请先使用管理员账号登录。');
   const value=await setupResponse(response);
   if(!response.ok){
@@ -336,7 +336,7 @@ $('echoear-network-form').onsubmit=event=>{
 };
 $('echoear-copy-setup').onclick=async()=>{
  try{
-  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(device?.mac?{device_id:device.mac}:{})});
+  const response=await fetch('/api/clients/echoear-s3/prepare',{method:'POST',headers:{'Content-Type':'application/json','X-AIHub-UI':'1'},body:JSON.stringify(device?.mac?{device_id:device.mac}:{})});
   if(response.status===401)throw new Error('请先使用管理员账号登录。');
   const value=await setupResponse(response);if(!response.ok)throw new Error(value.error?.message||'请先让管理员开启设备连接服务。');
   await navigator.clipboard.writeText(value.ota_url);$('echoear-setup-status').textContent='连接入口已复制。连接设备热点后，在设备配网页的“高级设置 → 自定义 OTA 地址”粘贴它并保存，再设置 Wi-Fi。';

@@ -7,7 +7,7 @@ const same=(a,b)=>assert.equal(Buffer.compare(Buffer.from(a),Buffer.from(b)),0);
 test('automatic save verifies the exact persisted copy without a file picker',async t=>{
  const f=await fixture(),{bytes}=await capture(f,'full');let saved=false;
  t.mock.method(globalThis,'fetch',async(url,options)=>{
-  if(options?.method==='POST'){same(options.body,bytes);saved=true;return Response.json({id:id(1)},{status:201});}
+  if(options?.method==='POST'){same(options.body,bytes);assert.equal(options.headers['X-AIHub-UI'],'1');saved=true;return Response.json({id:id(1)},{status:201});}
   assert.ok(saved);assert.match(url,new RegExp('/'+id(1)+'\\?'));return new Response(bytes);
  });
  const result=await saveAutomaticBackup(bytes,f.device);

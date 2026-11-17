@@ -34,7 +34,7 @@ function installer(){
   CustomEvent:class{constructor(type,options){this.type=type;this.detail=options?.detail}},
   TextEncoder,TextDecoder,console:{warn(){}},setInterval(){},setTimeout(){},
   fetch:async (url,options)=>{
-   if(String(url).includes('/prepare')){calls.prepare.push(JSON.parse(options.body));return Response.json({ota_url:'http://10.0.0.2:8766/xiaozhi/ota/token/',websocket:{url:'ws://10.0.0.2:8766/xiaozhi/v1/',token:'t'.repeat(20),version:1}});}
+   if(String(url).includes('/prepare')){assert.equal(options.headers['X-AIHub-UI'],'1');calls.prepare.push(JSON.parse(options.body));return Response.json({ota_url:'http://10.0.0.2:8766/xiaozhi/ota/token/',websocket:{url:'ws://10.0.0.2:8766/xiaozhi/v1/',token:'t'.repeat(20),version:1}});}
    calls.downloads++;return new Response(new Uint8Array(64));
   }};
  const state={savedWifi:false};

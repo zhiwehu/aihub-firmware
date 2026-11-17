@@ -10,7 +10,7 @@ async function checked(response){
 }
 export async function saveAutomaticBackup(bytes,device){
  const parsed=await decodeDeviceBackup(bytes);await validateDeviceBackup(parsed,device);
- const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:bytes});
+ const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/octet-stream','X-AIHub-UI':'1'},body:bytes});
  // A server that still only knows the 16/32MB container answers 400 here.
  if(response.status===400)throw new Error('server_outdated');
  await checked(response);

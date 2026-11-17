@@ -74,7 +74,7 @@ docs/                     USB 接入、升级验证记录、工具链说明
 | `aihub:connection-prepared` | 面板 → 控制台 | 配网信息已就绪，控制台可刷新设备状态 |
 
 模块在**所有面板元素绑定完成之后**注册 `window.AIHubFlasher`（`{client, module}`）。
-控制台先按需 `import` 这个模块，再检查该全局：存在才显示刷机面板，否则退回文字向导。
+新版控制台的独立 `/device-setup` 页面先按需 `import` 这个模块，再检查该全局：存在才显示 USB 面板；工具缺失或浏览器不支持时仍提供热点配网。
 面板的 DOM 骨架（`#echoear-installer` 那一段）归属控制台仓库，模块加载时按 id 直接绑定，
 所以两边改 id 必须同时改。
 
@@ -91,12 +91,14 @@ docs/                     USB 接入、升级验证记录、工具链说明
 # 1) 由 aihub-server 的网页控制台托管（正常路径）
 #    服务端把本仓库的 flash/ 挂在 /firmware 下：
 #    AIHUB_FIRMWARE_ROOT=<workspace>/aihub-firmware/flash
-#    浏览器打开 http://127.0.0.1:8765/#connections，选中喵伴即可
+#    浏览器打开 http://127.0.0.1:8765/device-setup，先登录管理端即可
 
-# 2) 发布到 https 站点（例如 GitHub Pages），此时完全不需要后端
+# 2) 远程服务端：SSH 转发管理端端口，仍从本机 localhost 打开
+#    ssh -N -L 9765:127.0.0.1:8765 user@server
+#    浏览器打开 http://127.0.0.1:9765/device-setup
 ```
 
-本仓库**不带入口 HTML**：面板骨架在 `aihub-web/public/index.html`，模块只负责绑定和
+本仓库**不带入口 HTML**：新版面板骨架在 `aihub/packages/server/src/aihub_server/console/public/device-setup.html`，模块只负责绑定和
 串口逻辑。单独起静态服务（`python3 -m http.server`）只会得到没有面板的裸模块。
 
 ## 构建固件
@@ -154,7 +156,7 @@ node --test tests/*.mjs
 | OTA 端点、设备令牌、局域网监听 | `aihub-server` |
 | 固件产物托管与下载校验 | `aihub-server`（只验 sha256 和大小） |
 | 设备整片备份的落盘 | `aihub-server` |
-| 网页控制台其余部分 | `aihub-web` |
+| 网页控制台其余部分 | `aihub` 的 `aihub_server.console` |
 | 实时语音后端 | `aihub-server` / `aihub-models` |
 
 ## 历史与许可
@@ -182,3 +184,7 @@ until the newly provisioned connection is verified. Existing devices are not
 reconfigured automatically; legacy shared-token setup remains server-compatible.
 
 三仓布局下，本仓库继续独立构建与发布。核心后台通过显式 `AIHUB_FIRMWARE_ROOT` 或部署发布包挂载 `flash/`，不依赖旧六仓平级目录。浏览器聊天客户端属于独立的 `aihub-client-web`。
+
+新版管理端写请求需要 `X-AIHub-UI: 1`。配网与备份模块已携带该标记，
+必须和 core 的 `/device-setup` 页面配套发布。升级默认关闭，仅在用户明确勾选
+且发布包 `install.validated` 为 true 时执行；日常配网不依赖固件安装包。
